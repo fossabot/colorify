@@ -1,0 +1,99 @@
+group: edge
+language: go
+sudo: required
+
+go_import_path: github.com/ahmedkamals/colorify
+
+git:
+  depth: 18
+
+matrix:
+  allow_failures:
+    - go: tip
+  fast_finish: true
+
+env:
+  global:
+    - secure: "mW/CjSIq7lQOjhN+syhoJHNh0oyt9teDlhB9ZUSsylkVQPisHPj/G6D5KSnjWmQzvuVFlxN1++O0VAtDasEOCir4YTUwQVgfceC90bePxaTLcJeva3mJNDVBMZR/GVrsL9uunHscfLRNtX6TBLCh4NEO6H341J6vbF0GIQ3deOlCHBLNLnBsc1larUAzjOoIqeK0+X4rEo4HaMg1BWuH0XL+QNdI2WVPXueNOVhimCClsW3HSgPEea5KTozMd08Kr+LTbt+N2RaM6jb/F+CfCQEy8f7VoZKMZlD5m5VBI/AmJtjrR9mcFs0cKq4+im73x/x6v4WoCDndHdP3wq5vvVZzOK3CbhiYAUqp5nsiNzWu6IPyS9q81GleBFWI7zT6d9bZG5ah/+4J8Vw7AXwrYb8691sRQ5HzXVkV9vkDfV/YSsse0kIiwOywBGSN1zMzjxoXZdCAKBWPiLLhnxNJLJfPjwUCZzXEGXPfRVNT6PZPH4smDceaDYntHQBQAO9w3C4PCi0Qczolj8d+XFmRhstl6xoTcMiPsPZESA4SIilwFJlmOzLQvDrfh3LUWMMS06Im1u79amYLMNq7LMtcsuhm3LbvgHxuIsEEnwC+covHutPeDiExte843dKrnJL2cgZa2ttzpoIMk2qgT/XV2MZiUny+da9wLkoiJLWrXTo="
+    - BUILD=true
+    - GO111MODULE=on
+
+branches:
+  only:
+    # Pushes and PR to the master branch
+    - master
+    # IMPORTANT Ruby regex to match tags. Required, or travis won't trigger deploys when a new tag
+    # is pushed. This regex matches semantic versions like v1.2.3-rc4+2016.02.22
+    - /^v\d+\.\d+\.\d+.*$/
+
+jobs:
+  include:
+    - stage: Validation
+      go: 1.12
+      env:
+        - VALIDATE=true
+        - BUILD=false
+      install:
+        - make get-deps
+    - &unit-tests
+      stage: Unit tests
+      go: 1.12
+      os: linux
+      env: TESTS=true
+    - <<: *unit-tests
+      os: osx
+    - <<: *unit-tests
+      go: 1.12.x
+    - <<: *unit-tests
+      go: 1.12.x
+      os: osx
+    - <<: *unit-tests
+      go: tip
+    - <<: *unit-tests
+      go: tip
+      os: osx
+    - stage: Integration tests
+      go: 1.12
+      env:
+        - BUILD=false
+      script:
+        - make integration
+    - stage: Coverage
+      go: 1.12
+      env:
+        - COVERAGE=true
+        - BUILD=false
+      install:
+        - make get-deps
+
+before_install:
+   - bash ./.travis/install.sh
+
+install:
+  - make go-install
+
+script:
+  # This to fix the error "fatal: ref HEAD is not a symbolic ref", that appears after every make call.
+  - git checkout -b build-${TRAVIS_PULL_REQUEST}
+  - if [ "$BUILD" == true ]; then make build ; else echo 'skipping build.'; fi
+  - if [ "$VALIDATE" == true ]; then make validate ; else echo 'skipping verification.'; fi
+  - if [ "$COVERAGE" == true ]; then make cover; travis_retry make coverage-send || true ; else echo 'skipping coverage.'; fi
+  - if [ "$TESTS" == true ]; then make unit race bench ; else echo 'skipping tests.'; fi
+
+after_success:
+  - if [ "$COVERAGE" == true ]; then bash <(curl -s https://codecov.io/bash) || true ; else echo 'skipping sending coverage.'; fi
+  - make nuke
+  - echo "TRAVIS_PULL_REQUEST=${TRAVIS_PULL_REQUEST}"
+  - echo "TRAVIS_PULL_REQUEST_BRANCH=${TRAVIS_PULL_REQUEST_BRANCH}"
+  - echo "TRAVIS_BRANCH=${TRAVIS_BRANCH}"
+
+notifications:
+  email:
+      on_success: change
+      on_failure: always
+  webhooks:
+      urls:
+        - https://webhooks.gitter.im/e/08ebda96ec2e5e5fe119
+      on_success: change  # options: [always|never|change] default: always
+      on_failure: always  # options: [always|never|change] default: always
+      on_start: never     # options: [always|never|change] default: always

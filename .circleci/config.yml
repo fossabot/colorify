@@ -1,0 +1,128 @@
+version: 2.1
+
+alias:
+  default: &default
+    environment:
+      PROJECT_NAME: "Colorify"
+    parallelism: 3
+    working_directory: /go/src/github.com/ahmedkamals/colorify
+    docker:
+      - image: circleci/golang:1.13.0
+        environment:
+          GOPATH: "/go"
+          GO111MODULE: "on"
+          REPO_NAME: "ahmedkamals"
+          IMAGE_NAME: "colorify"
+          GITHUB_API: "https://api.github.com/"
+          DOCKER_USER: "ahmedkamals"
+  setup_remote_docker: &setup_remote_docker
+    version: 19.03.2-ce
+    docker_layer_caching: true
+
+jobs:
+  checkout:
+    executor: go
+    steps:
+      - checkout
+      - persist_to_workspace:
+          paths:
+            - .
+
+  linting:
+    <<: *default
+    steps:
+      - attach_workspace:
+          at: .
+      - restore_cache:
+          keys:
+            - gosum-{{ .Branch }}-{{ checksum "go.sum" }}
+      - run:
+          name: Vendor dependencies
+          command: |
+            go mod download
+      - run:
+          name: Validation tests
+          command: |
+            make get-deps validate
+      - save_cache:
+          key: gosum-{{ .Branch }}-{{ checksum "go.sum" }}
+          paths:
+            - ./vendor
+
+  unit:
+    <<: *default
+    steps:
+      - attach_workspace:
+          at: .
+      - restore_cache:
+          key: gosum-{{ .Branch }}-{{ checksum "go.sum" }}
+      - run: make cover
+          name: Unit tests
+          command: |
+            make cover
+      - store_artifacts:
+          path: ./coverage.html
+
+  versioning:
+    <<: *default
+    steps:
+      - run:
+          name: check
+          command: .circleci/versionize.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  push:
+    <<: *default
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: push tag and check PR body
+          command: .circleci/push.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  release:
+    <<: *default
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: release
+          command: .circleci/release.sh
+
+workflows:
+  version: 2.1
+  build:
+    jobs:
+      - linting:
+          requires:
+            - checkout
+      - testing:
+          requires:
+            - checkout
+      - versioning:
+          requires:
+            - linting
+            - testing
+          filters:
+            branches:
+              only: master
+      - push:
+          requires:
+            - versioning
+  release:
+    jobs:
+      - release:
+          requires:
+            - push
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*(-.*)*/
